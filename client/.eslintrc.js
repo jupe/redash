@@ -1,7 +1,7 @@
 module.exports = {
   root: true,
-  extends: ["airbnb", "plugin:jest/recommended"],
-  plugins: ["jest", "cypress"],
+  extends: ["airbnb", "plugin:jest/recommended", "plugin:compat/recommended"],
+  plugins: ["jest", "cypress", "compat"],
   settings: {
     "import/resolver": "webpack"
   },
