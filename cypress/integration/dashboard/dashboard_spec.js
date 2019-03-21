@@ -142,4 +142,21 @@ describe('Dashboard', () => {
       cy.get('@textboxEl').should('contain', newContent);
     });
   });
+
+  it('One column mode on 800px', () => {
+    cy.viewport(1215, 800);
+    createNewDashboardByAPI('Foo Bar').then((slug) => {
+      cy.visit(`/dashboard/${slug}`);
+      addTextbox('Hello World!')
+        .as('textboxEl')
+        .should(($el) => {
+          expect($el.width()).to.eq(600);
+        });
+      cy.viewport(800, 800);
+      cy.get('@textboxEl')
+        .should(($el) => {
+          expect($el.width()).to.eq(785);
+        });
+    });
+  });
 });
