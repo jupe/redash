@@ -12,7 +12,6 @@ from redash.query_runner import (
     register,
 )
 from redash.settings import parse_boolean
-from redash.utils import json_dumps, json_loads
 
 logger = logging.getLogger(__name__)
 ANNOTATE_QUERY = parse_boolean(os.environ.get("ATHENA_ANNOTATE_QUERY", "true"))
@@ -47,7 +46,7 @@ _TYPE_MAPPINGS = {
 }
 
 
-class SimpleFormatter(object):
+class SimpleFormatter:
     def format(self, operation, parameters=None):
         return operation
 
@@ -77,6 +76,10 @@ class Athena(BaseQueryRunner):
                     "default": "default",
                 },
                 "glue": {"type": "boolean", "title": "Use Glue Data Catalog"},
+                "catalog_ids": {
+                    "type": "string",
+                    "title": "Enter Glue Data Catalog IDs, separated by commas (leave blank for default catalog)",
+                },
                 "work_group": {
                     "type": "string",
                     "title": "Athena Work Group",
@@ -89,7 +92,7 @@ class Athena(BaseQueryRunner):
                 },
             },
             "required": ["region", "s3_staging_dir"],
-            "extra_options": ["glue", "cost_per_tb"],
+            "extra_options": ["glue", "catalog_ids", "cost_per_tb"],
             "order": [
                 "region",
                 "s3_staging_dir",
@@ -173,16 +176,23 @@ class Athena(BaseQueryRunner):
                 "region_name": self.configuration["region"],
             }
 
-    def __get_schema_from_glue(self):
+    def __get_schema_from_glue(self, catalog_id=""):
         client = boto3.client("glue", **self._get_iam_credentials())
         schema = {}
 
         database_paginator = client.get_paginator("get_databases")
         table_paginator = client.get_paginator("get_tables")
 
-        for databases in database_paginator.paginate():
+        databases_iterator = database_paginator.paginate(
+            **({"CatalogId": catalog_id} if catalog_id != "" else {}),
+        )
+
+        for databases in databases_iterator:
             for database in databases["DatabaseList"]:
-                iterator = table_paginator.paginate(DatabaseName=database["Name"])
+                iterator = table_paginator.paginate(
+                    DatabaseName=database["Name"],
+                    **({"CatalogId": catalog_id} if catalog_id != "" else {}),
+                )
                 for table in iterator.search("TableList[]"):
                     table_name = "%s.%s" % (database["Name"], table["Name"])
                     if "StorageDescriptor" not in table:
@@ -197,7 +207,8 @@ class Athena(BaseQueryRunner):
 
     def get_schema(self, get_stats=False):
         if self.configuration.get("glue", False):
-            return self.__get_schema_from_glue()
+            catalog_ids = [id.strip() for id in self.configuration.get("catalog_ids", "").split(",")]
+            return sum([self.__get_schema_from_glue(catalog_id) for catalog_id in catalog_ids], [])
 
         schema = {}
         query = """
@@ -210,7 +221,6 @@ class Athena(BaseQueryRunner):
         if error is not None:
             self._handle_run_query_error(error)
 
-        results = json_loads(results)
         for row in results["rows"]:
             table_name = "{0}.{1}".format(row["table_schema"], row["table_name"])
             if table_name not in schema:
@@ -257,14 +267,13 @@ class Athena(BaseQueryRunner):
                 },
             }
 
-            json_data = json_dumps(data, ignore_nan=True)
             error = None
         except Exception:
             if cursor.query_id:
                 cursor.cancel()
             raise
 
-        return json_data, error
+        return data, error
 
 
 register(Athena)
